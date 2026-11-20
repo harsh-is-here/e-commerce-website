@@ -1,4 +1,4 @@
-import React, { useContext, useEffect } from 'react'
+import { useCallback, useContext, useEffect } from 'react'
 
 import { ShopContext } from '../context/ShopContext'
 import { useSearchParams } from 'react-router-dom'
@@ -7,12 +7,13 @@ import axios from 'axios'
 
 const Verify = () => {
 const {navigate , token, setCartItems, backendUrl} = useContext(ShopContext)
-const [searchParams , setSearchParams] = useSearchParams();
+const [searchParams] = useSearchParams();
 
-const success = searchParams.get('success');
+const sessionId = searchParams.get('session_id');
+const cancelled = searchParams.get('cancelled');
 const orderId = searchParams.get('orderId');
 
-const verifyPayment = async () => {
+const verifyPayment = useCallback(async () => {
 
   try {
     if (!token) {
@@ -20,7 +21,11 @@ const verifyPayment = async () => {
       
     }
 
-    const response = await axios.post(backendUrl+'/api/order/verifyStripe',{success,orderId},{headers:{token}})
+    const response = await axios.post(
+      backendUrl+'/api/order/verifyStripe',
+      { sessionId, cancelled, orderId },
+      {headers:{token}}
+    )
     console.log(response.data.success);
     
     if (response.data.success) {
@@ -38,12 +43,12 @@ const verifyPayment = async () => {
   }
 
 
-}
+}, [backendUrl, cancelled, navigate, orderId, sessionId, setCartItems, token])
 
 useEffect(()=>{
   verifyPayment()
 
-},[token])
+},[verifyPayment])
   return (
     <div>
        

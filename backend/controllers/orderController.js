@@ -106,11 +106,21 @@ const placeOrderStripe = async(req,res) =>{
 
     })
 
-    const session = await stripe.checkout.sessions .create({
-      success_url: `${origin}/verify?success=true&orderId=${newOrder._id}`,
-      cancel_url : `${origin}/verify?success=false&orderId=${newOrder._id}`,
+    const frontendUrl = process.env.FRONTEND_URL || origin;
+
+    const session = await stripe.checkout.sessions.create({
+      success_url: `${frontendUrl}/verify?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url : `${frontendUrl}/verify?cancelled=true&orderId=${newOrder._id}`,
       line_items,
       mode: 'payment',
+      metadata: {
+        orderId: newOrder._id.toString(),
+        userId
+      }
+    })
+
+    await orderModel.findByIdAndUpdate(newOrder._id, {
+      stripeSessionId: session.id
     })
 
     res.json({success:true,session_url:session.url})
@@ -128,26 +138,56 @@ const placeOrderStripe = async(req,res) =>{
 
 //verify stripe
 const verifyStripe = async (req,res) =>{
-  const {orderId, success, userId} = req.body;
+  const {sessionId, cancelled, orderId, userId} = req.body;
+
   try {
-
-    if (success==="true") {
-      await orderModel.findByIdAndUpdate(orderId, {payment:true});
-      await userModel.findByIdAndUpdate(userId,{cartData:{}});
-      res.json({success:true})
-
-      
-    }else{
-      await orderModel.findByIdAndDelete(orderId);
-      res.json({success:false})
-
+    if (cancelled === "true") {
+      await orderModel.findOneAndDelete({_id: orderId, userId});
+      return res.json({success:false, cancelled:true})
     }
-    
+
+    if (!sessionId) {
+      return res.json({success:false, message:'Stripe session ID is required'})
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId)
+    const sessionOrderId = session.metadata?.orderId
+    const sessionUserId = session.metadata?.userId
+
+    if (!sessionOrderId) {
+      return res.json({success:false, message:'Invalid Stripe session'})
+    }
+
+    if (sessionUserId !== userId) {
+      return res.json({success:false, message:'Stripe session does not belong to this user'})
+    }
+
+    const order = await orderModel.findOne({_id:sessionOrderId, userId})
+
+    if (!order) {
+      return res.json({success:false, message:'Order not found'})
+    }
+
+    if (order.stripeSessionId && order.stripeSessionId !== session.id) {
+      return res.json({success:false, message:'Stripe session does not belong to this order'})
+    }
+
+    if (session.status !== 'complete' || session.payment_status !== 'paid') {
+      return res.json({success:false, message:'Payment is not complete'})
+    }
+
+    if (session.currency !== currency || session.amount_total !== Math.round(order.amount * 100)) {
+      return res.json({success:false, message:'Payment amount or currency mismatch'})
+    }
+
+    await orderModel.findByIdAndUpdate(sessionOrderId, {payment:true})
+    await userModel.findByIdAndUpdate(userId,{cartData:{}})
+
+    res.json({success:true})
+
   } catch (error) {
     console.log(error);
     res.json({success:false,message:error.message})
-
-    
   }
 }
  
